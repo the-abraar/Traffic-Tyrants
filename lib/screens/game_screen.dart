@@ -14,6 +14,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   late GameEngine _engine;
   late AnimationController _animCtrl;
   bool _started = false;
+  bool _navigating = false;
+
+  // Raw pointer tracking (Listener instead of GestureDetector: gesture-arena
+  // competition made hold-to-move unresponsive until the finger dragged).
+  final Map<int, Offset> _pointers = {};
+  final Map<int, (Offset, Duration)> _downInfo = {};
 
   @override
   void initState() {
@@ -33,7 +39,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   void _checkGameOver() {
-    if (_engine.phase == GamePhase.gameOver && mounted) {
+    if (_engine.phase == GamePhase.gameOver && mounted && !_navigating) {
+      _navigating = true; // engine keeps notifying every tick — schedule once
       // Small delay so the last frame renders
       Future.delayed(const Duration(milliseconds: 400), () {
         if (mounted) {
@@ -61,16 +68,19 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             });
           }
 
-          return GestureDetector(
-            // Left / Right movement zones
-            onPanStart: (d)  => _handleTouch(d.localPosition, w, true),
-            onPanUpdate: (d) => _handleTouch(d.localPosition, w, true),
-            onPanEnd:   (_)  { _engine.onLeft(false); _engine.onRight(false); },
-            onPanCancel: ()  { _engine.onLeft(false); _engine.onRight(false); },
-            // Tap = viral blast (swipe up gesture)
-            onVerticalDragEnd: (d) {
-              if ((d.primaryVelocity ?? 0) < -400) _engine.viralBlast();
+          return Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (e) {
+              _pointers[e.pointer] = e.localPosition;
+              _downInfo[e.pointer] = (e.localPosition, e.timeStamp);
+              _updateZones(w);
             },
+            onPointerMove: (e) {
+              _pointers[e.pointer] = e.localPosition;
+              _updateZones(w);
+            },
+            onPointerUp: (e) => _endPointer(e, w, checkSwipe: true),
+            onPointerCancel: (e) => _endPointer(e, w),
             child: Stack(children: [
               // Game canvas
               AnimatedBuilder(
@@ -103,11 +113,26 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _handleTouch(Offset pos, double w, bool pressing) {
-    final leftZone  = pos.dx < w * 0.42;
-    final rightZone = pos.dx > w * 0.58;
-    _engine.onLeft(pressing && leftZone);
-    _engine.onRight(pressing && rightZone);
+  void _endPointer(PointerEvent e, double w, {bool checkSwipe = false}) {
+    final down = _downInfo.remove(e.pointer);
+    _pointers.remove(e.pointer);
+    _updateZones(w);
+    // Swipe up = viral blast
+    if (checkSwipe && down != null) {
+      final dy = down.$1.dy - e.localPosition.dy;
+      final ms = (e.timeStamp - down.$2).inMilliseconds;
+      if (dy > 70 && ms > 0 && ms < 400) _engine.viralBlast();
+    }
+  }
+
+  void _updateZones(double w) {
+    bool left = false, right = false;
+    for (final p in _pointers.values) {
+      if (p.dx < w * 0.42) left = true;
+      if (p.dx > w * 0.58) right = true;
+    }
+    _engine.onLeft(left);
+    _engine.onRight(right);
   }
 }
 
@@ -125,15 +150,15 @@ class _ControlHint extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Colors.transparent, Colors.white.withOpacity(0.04)],
+          colors: [Colors.transparent, Colors.white.withValues(alpha: 0.04)],
         ),
-        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
+        border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(icon, style: TextStyle(color: Colors.white.withOpacity(0.25), fontSize: 28)),
-          Text(label, style: TextStyle(color: Colors.white.withOpacity(0.15), fontSize: 9, letterSpacing: 2)),
+          Text(icon, style: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 28)),
+          Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.15), fontSize: 9, letterSpacing: 2)),
         ],
       ),
     );
@@ -158,11 +183,11 @@ class _ViralHint extends StatelessWidget {
               fontSize: ready ? 28 : 14,
               color: ready ? Colors.orange : Colors.white24)),
             Text('VIRAL', style: TextStyle(
-              color: ready ? Colors.orange.withOpacity(0.8) : Colors.white12,
+              color: ready ? Colors.orange.withValues(alpha: 0.8) : Colors.white12,
               fontSize: 8, letterSpacing: 1.5,
               fontWeight: FontWeight.w700)),
             Text('↑ swipe', style: TextStyle(
-              color: ready ? Colors.orange.withOpacity(0.6) : Colors.white12,
+              color: ready ? Colors.orange.withValues(alpha: 0.6) : Colors.white12,
               fontSize: 7)),
           ],
         );

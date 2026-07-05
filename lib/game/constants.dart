@@ -36,5 +36,9 @@ const double kShootCooldown       = 0.33;
 const double kInvincibleDuration  = 2.2;
 const double kFormationDrop       = 26.0;
 
+// ── Formation layout ──────────────────────────────────────────────────────────
+const double kFmMargin       = 14.0; // side margin that triggers a bounce
+const double kFmMaxSpanFrac  = 0.72; // max formation span as fraction of screen width
+
 // ── Scoring ───────────────────────────────────────────────────────────────────
 const double kViralPerKill = 0.09; // ~11 kills to charge

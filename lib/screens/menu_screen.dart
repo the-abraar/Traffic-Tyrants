@@ -48,15 +48,15 @@ class _MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateM
                   color: Colors.yellowAccent,
                   letterSpacing: 6,
                   shadows: [
-                    Shadow(blurRadius: 20, color: Colors.orange.withOpacity(0.8)),
-                    Shadow(blurRadius: 40, color: Colors.red.withOpacity(0.4)),
+                    Shadow(blurRadius: 20, color: Colors.orange.withValues(alpha: 0.8)),
+                    Shadow(blurRadius: 40, color: Colors.red.withValues(alpha: 0.4)),
                   ],
                 )),
                 Text('INVADERS', style: TextStyle(
                   fontSize: 28, fontWeight: FontWeight.w900,
                   color: Colors.white,
                   letterSpacing: 10,
-                  shadows: [Shadow(blurRadius: 12, color: Colors.blue.withOpacity(0.6))],
+                  shadows: [Shadow(blurRadius: 12, color: Colors.blue.withValues(alpha: 0.6))],
                 )),
               ]),
             ),
@@ -67,7 +67,7 @@ class _MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateM
               child: Text(
                 'The corrupt traffic sergeants of BD are throwing mamlas!\nRide and dodge — your honk is your weapon!',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 13, height: 1.6),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.6),
               ),
             ),
             // TAP TO PLAY button
@@ -83,7 +83,7 @@ class _MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateM
                     decoration: BoxDecoration(
                       gradient: LinearGradient(colors: [Colors.orange.shade700, Colors.red.shade700]),
                       borderRadius: BorderRadius.circular(40),
-                      boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.4), blurRadius: 24, spreadRadius: 2)],
+                      boxShadow: [BoxShadow(color: Colors.orange.withValues(alpha: 0.4), blurRadius: 24, spreadRadius: 2)],
                     ),
                     child: Row(mainAxisSize: MainAxisSize.min, children: const [
                       Text('🏍️', style: TextStyle(fontSize: 22)),
@@ -158,7 +158,7 @@ class _StarsPainter extends CustomPainter {
       final x = rng.nextDouble() * size.width;
       final y = rng.nextDouble() * size.height;
       final tw = 0.4 + 0.6 * (0.5 + 0.5 * sin(t * (0.8 + i * 0.13) + i));
-      p.color = Colors.white.withOpacity(tw * 0.6);
+      p.color = Colors.white.withValues(alpha: tw * 0.6);
       canvas.drawCircle(Offset(x, y), 0.4 + rng.nextDouble() * 1.2, p);
     }
   }

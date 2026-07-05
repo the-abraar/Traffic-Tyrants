@@ -11,6 +11,12 @@ class GameEngine extends ChangeNotifier {
 
   // ── Formation ────────────────────────────────────────────────────────────────
   double fmX = 0, fmY = 0, fmDir = 1, fmSpeed = kEnemyBaseSpeed;
+  // Responsive layout: spacing shrinks on narrow screens so the formation
+  // always has room to sway (see start()).
+  double spacingX = kEnemySpacingX;
+  double enemyScale = 1.0;
+  double get eW => kEnemyW * enemyScale;
+  double get eH => kEnemyH * enemyScale;
 
   // ── Entities ─────────────────────────────────────────────────────────────────
   List<Enemy>      enemies      = [];
@@ -31,7 +37,7 @@ class GameEngine extends ChangeNotifier {
   bool movLeft = false, movRight = false;
 
   // ── Progression ──────────────────────────────────────────────────────────────
-  int score = 0, highScore = 0, level = 1, combo = 0;
+  int score = 0, highScore = 0, level = 1, combo = 0, kills = 0;
   double comboT = 0, viralCharge = 0;
 
   // ── Internal timing ──────────────────────────────────────────────────────────
@@ -51,6 +57,11 @@ class GameEngine extends ChangeNotifier {
 
   void start(TickerProvider vsync, double w, double h) {
     sw = w; sh = h;
+    // Fit the formation to the screen: cap its span at kFmMaxSpanFrac of the
+    // width so it always has sway room before hitting the bounce margins.
+    final maxSpan = sw * kFmMaxSpanFrac;
+    spacingX = min(kEnemySpacingX, (maxSpan - kEnemyW) / (kCols - 1));
+    enemyScale = (spacingX / kEnemySpacingX).clamp(0.65, 1.0);
     playerX = sw / 2;
     _reset();
     _ticker?.dispose();
@@ -75,7 +86,7 @@ class GameEngine extends ChangeNotifier {
   }
 
   void restart() {
-    lives = 3; score = 0; level = 1;
+    lives = 3; score = 0; level = 1; kills = 0;
     combo = 0; comboT = 0; viralCharge = 0;
     shielded = multiShot = slowMo = invincible = false;
     _reset();
@@ -90,9 +101,9 @@ class GameEngine extends ChangeNotifier {
 
   // ── Enemy screen position ─────────────────────────────────────────────────────
   (double, double) ePos(Enemy e) {
-    final totalW = (kCols - 1) * kEnemySpacingX;
+    final totalW = (kCols - 1) * spacingX;
     final sx = (sw - totalW) / 2;
-    return (sx + e.col * kEnemySpacingX + fmX, kEnemyStartY + e.row * kEnemySpacingY + fmY);
+    return (sx + e.col * spacingX + fmX, kEnemyStartY + e.row * kEnemySpacingY + fmY);
   }
 
   // ── Init / Reset ──────────────────────────────────────────────────────────────
@@ -151,7 +162,7 @@ class GameEngine extends ChangeNotifier {
 
     if (phase == GamePhase.bossWarning) {
       _bossWarnT -= dt;
-      if (_bossWarnT <= 0) { boss = Boss(sw: sw); phase = GamePhase.bossFight; }
+      if (_bossWarnT <= 0) { boss = Boss(sw: sw, level: level); phase = GamePhase.bossFight; }
       return;
     }
 
@@ -228,10 +239,9 @@ class GameEngine extends ChangeNotifier {
       if (ex < minX) minX = ex;
       if (ex > maxX) maxX = ex;
     }
-    const margin = 14.0;
-    if (fmDir > 0 && maxX + kEnemyW / 2 >= sw - margin) {
+    if (fmDir > 0 && maxX + eW / 2 >= sw - kFmMargin) {
       fmDir = -1; fmY += kFormationDrop;
-    } else if (fmDir < 0 && minX - kEnemyW / 2 <= margin) {
+    } else if (fmDir < 0 && minX - eW / 2 <= kFmMargin) {
       fmDir = 1; fmY += kFormationDrop;
     }
   }
@@ -251,7 +261,7 @@ class GameEngine extends ChangeNotifier {
     if (front.isNotEmpty) {
       final shooter = front.values.elementAt(_rng.nextInt(front.length));
       final (sx, sy) = ePos(shooter);
-      mamlas.add(Mamla(x: sx, y: sy + kEnemyH / 2, speed: kMamlaBaseSpeed + level * 12));
+      mamlas.add(Mamla(x: sx, y: sy + eH / 2, speed: kMamlaBaseSpeed + level * 12));
     }
 
     final alive = enemies.where((e) => e.alive).length;
@@ -343,7 +353,7 @@ class GameEngine extends ChangeNotifier {
       for (final e in enemies) {
         if (!e.alive) continue;
         final (ex, ey) = ePos(e);
-        if (_hit(b.x, b.y, kBulletW, kBulletH, ex, ey, kEnemyW, kEnemyH)) {
+        if (_hit(b.x, b.y, kBulletW, kBulletH, ex, ey, eW, eH)) {
           b.active = false; _killEnemy(e); break;
         }
       }
@@ -383,7 +393,7 @@ class GameEngine extends ChangeNotifier {
     for (final e in enemies) {
       if (!e.alive) continue;
       final (_, ey) = ePos(e);
-      if (ey + kEnemyH / 2 >= playerY - kPlayerH / 2) {
+      if (ey + eH / 2 >= playerY - kPlayerH / 2) {
         phase = GamePhase.gameOver; _saveHigh(); return;
       }
     }
@@ -401,6 +411,7 @@ class GameEngine extends ChangeNotifier {
         phase == GamePhase.bossFight && (boss == null || !boss!.active)) {
       phase = GamePhase.levelComplete;
       _lvlDoneT = 2.4;
+      _saveHigh(); // persist between levels so a kill/crash doesn't lose the record
       _addFloat(sw / 2, sh * .42, '✅ LEVEL $level CLEARED!', Colors.greenAccent);
     }
   }
@@ -410,6 +421,7 @@ class GameEngine extends ChangeNotifier {
   void _killEnemy(Enemy e, {bool viral = false}) {
     e.alive = false;
     final (ex, ey) = ePos(e);
+    kills++;
     combo++; comboT = 2.0;
     final mul = combo >= 6 ? 4 : combo >= 4 ? 3 : combo >= 2 ? 2 : 1;
     final pts = e.points * mul;
@@ -429,6 +441,7 @@ class GameEngine extends ChangeNotifier {
 
   void _killBoss(Boss b) {
     b.active = false;
+    kills++;
     score += 500; if (score > highScore) highScore = score;
     _shakeT = 1.0;
     for (int i = 0; i < 9; i++) {

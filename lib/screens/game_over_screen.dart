@@ -65,7 +65,7 @@ class _GameOverScreenState extends State<GameOverScreen>
                 const SizedBox(height: 4),
                 Text(
                   'The sergeants won this round.',
-                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
                 ),
                 const SizedBox(height: 36),
 
@@ -74,7 +74,7 @@ class _GameOverScreenState extends State<GameOverScreen>
                   margin: const EdgeInsets.symmetric(horizontal: 40),
                   padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.06),
+                    color: Colors.white.withValues(alpha: 0.06),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: Colors.white12),
                   ),
@@ -86,7 +86,7 @@ class _GameOverScreenState extends State<GameOverScreen>
                     _Row('LEVEL',      '${e.level}',     Colors.cyanAccent),
                     const Divider(color: Colors.white12, height: 20),
                     _Row('ENEMIES JAILED',
-                        '${e.score ~/ 10}',   Colors.greenAccent),
+                        '${e.kills}',   Colors.greenAccent),
                   ]),
                 ),
                 const SizedBox(height: 44),
@@ -96,11 +96,10 @@ class _GameOverScreenState extends State<GameOverScreen>
                   label: '🏍️  RIDE AGAIN',
                   color1: Colors.orange.shade700,
                   color2: Colors.red.shade700,
-                  onTap: () {
-                    e.restart();
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const GameScreen()));
-                  },
+                  // Note: the engine passed here is already disposed (GameScreen
+                  // disposed it). GameScreen creates a fresh engine, so no restart().
+                  onTap: () => Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (_) => const GameScreen())),
                 ),
                 const SizedBox(height: 14),
                 _BigBtn(
@@ -115,7 +114,7 @@ class _GameOverScreenState extends State<GameOverScreen>
                   '"Every mamla has an end.\nRide through it."',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withValues(alpha: 0.3),
                     fontSize: 12,
                     fontStyle: FontStyle.italic,
                   ),
@@ -159,7 +158,7 @@ class _BigBtn extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: LinearGradient(colors: [color1, color2]),
           borderRadius: BorderRadius.circular(36),
-          boxShadow: [BoxShadow(color: color1.withOpacity(0.35), blurRadius: 18, spreadRadius: 1)],
+          boxShadow: [BoxShadow(color: color1.withValues(alpha: 0.35), blurRadius: 18, spreadRadius: 1)],
         ),
         child: Text(label,
           textAlign: TextAlign.center,

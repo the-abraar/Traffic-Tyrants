@@ -12,9 +12,10 @@ class Enemy {
   final EnemyType type;
   bool alive = true;
   double animTimer;
+  static final _rng = Random();
 
   Enemy({required this.row, required this.col, required this.type})
-      : animTimer = Random().nextDouble() * 6.28;
+      : animTimer = _rng.nextDouble() * 6.28;
 
   int get points => switch (type) {
         EnemyType.constable  => 10,
@@ -44,7 +45,14 @@ class Boss {
   double shootTimer = 1.5;
   bool active = true;
 
-  Boss({required double sw}) : x = sw / 2, y = 110, hp = 6, maxHp = 6;
+  Boss({required double sw, int level = 3})
+      : x = sw / 2,
+        y = 110,
+        hp = hpFor(level),
+        maxHp = hpFor(level);
+
+  // 6 HP for the first boss (level 3), +2 per subsequent boss, capped at 30.
+  static int hpFor(int level) => (6 + ((level ~/ 3) - 1).clamp(0, 12) * 2).clamp(6, 30);
 }
 
 // ── Bullet ────────────────────────────────────────────────────────────────────
