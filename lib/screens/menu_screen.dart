@@ -110,9 +110,9 @@ class _MenuScreenState extends State<MenuScreen> with SingleTickerProviderStateM
             Positioned(
               bottom: 30, left: 0, right: 0,
               child: const Text(
-                'Hold LEFT / RIGHT sides to move • Auto-fires',
+                'Hold LEFT / RIGHT sides to move (or ← → keys) • Auto-fires\nSPACE = viral blast • P = pause',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white38, fontSize: 11),
+                style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.5),
               ),
             ),
           ]);

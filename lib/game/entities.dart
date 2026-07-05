@@ -4,18 +4,21 @@ import 'package:flutter/material.dart';
 // ── Enums ─────────────────────────────────────────────────────────────────────
 enum EnemyType { constable, sergeant, inspector }
 enum PowerUpType { shield, multiShot, slowMo }
-enum GamePhase { playing, bossWarning, bossFight, levelComplete, gameOver }
+enum GamePhase { getReady, playing, bossWarning, bossFight, levelComplete, gameOver }
 
 // ── Enemy ─────────────────────────────────────────────────────────────────────
 class Enemy {
   final int row, col;
   final EnemyType type;
   bool alive = true;
+  int hp;
+  double hitFlash = 0; // brief white flash when damaged but not killed
   double animTimer;
   static final _rng = Random();
 
   Enemy({required this.row, required this.col, required this.type})
-      : animTimer = _rng.nextDouble() * 6.28;
+      : hp = type == EnemyType.inspector ? 2 : 1,
+        animTimer = _rng.nextDouble() * 6.28;
 
   int get points => switch (type) {
         EnemyType.constable  => 10,
@@ -68,9 +71,10 @@ class Bullet {
 // ── Mamla ─────────────────────────────────────────────────────────────────────
 class Mamla {
   double x, y, speed, angle = 0, spin;
+  double vx; // horizontal drift — sergeants aim at the player
   bool active = true;
 
-  Mamla({required this.x, required this.y, required this.speed})
+  Mamla({required this.x, required this.y, required this.speed, this.vx = 0})
       : spin = (Random().nextDouble() - 0.5) * 5;
 }
 

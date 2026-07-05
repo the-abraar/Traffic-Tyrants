@@ -96,8 +96,8 @@ class _GameOverScreenState extends State<GameOverScreen>
                   label: '🏍️  RIDE AGAIN',
                   color1: Colors.orange.shade700,
                   color2: Colors.red.shade700,
-                  // Note: the engine passed here is already disposed (GameScreen
-                  // disposed it). GameScreen creates a fresh engine, so no restart().
+                  // The engine passed here is already disposed (GameScreen owns
+                  // its lifecycle); a new GameScreen creates a fresh engine.
                   onTap: () => Navigator.of(context).pushReplacement(
                     MaterialPageRoute(builder: (_) => const GameScreen())),
                 ),

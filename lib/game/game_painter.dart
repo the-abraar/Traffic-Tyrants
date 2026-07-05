@@ -28,7 +28,14 @@ class GamePainter extends CustomPainter {
     final key = '$text|$fontSize|${c.toARGB32()}|$emoji';
     var tp = _tpCache[key];
     if (tp == null) {
-      if (_tpCache.length > 300) _tpCache.clear();
+      if (_tpCache.length > 300) {
+        // Evict the oldest half (insertion order) instead of nuking the whole
+        // cache — a full clear caused a visible one-frame layout hitch.
+        final stale = _tpCache.keys.take(150).toList();
+        for (final k in stale) {
+          _tpCache.remove(k);
+        }
+      }
       tp = TextPainter(
         text: TextSpan(
           text: text,
@@ -79,6 +86,7 @@ class GamePainter extends CustomPainter {
     _drawHUD(canvas, size);
 
     // ── Phase overlays ────────────────────────────────────────────────────────
+    if (engine.phase == GamePhase.getReady) _drawGetReady(canvas, size);
     if (engine.phase == GamePhase.bossWarning) _drawBossWarning(canvas, size);
     if (engine.phase == GamePhase.levelComplete) _drawLevelComplete(canvas, size);
   }
@@ -160,6 +168,12 @@ class GamePainter extends CustomPainter {
     // Body circle
     _pFill.color = e.hatColor;
     canvas.drawCircle(Offset(cx, cy), r, _pFill);
+
+    // Damage flash (inspectors survive the first hit)
+    if (e.hitFlash > 0) {
+      _pFill.color = Colors.white.withValues(alpha: (e.hitFlash * 2.5).clamp(0.0, 0.8));
+      canvas.drawCircle(Offset(cx, cy), r + 3, _pFill);
+    }
 
     // Hat (trapezoid on top)
     final hatPaint = Paint()..color = e.hatColor.withValues(red: e.hatColor.r * 0.7);
@@ -424,51 +438,53 @@ class GamePainter extends CustomPainter {
   // ── HUD ───────────────────────────────────────────────────────────────────────
 
   void _drawHUD(Canvas canvas, Size size) {
+    final pad = engine.topPad; // keep the HUD clear of display cutouts
+
     // Top bar backdrop
     _pFill.color = Colors.black.withValues(alpha: 0.55);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, 52), _pFill);
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, 52 + pad), _pFill);
 
     // Score
-    _drawText(canvas, 'SCORE', 10, 8, 9, Colors.white54, align: TextAlign.left);
-    _drawText(canvas, '${engine.score}', 10, 20, 18, Colors.white, align: TextAlign.left);
+    _drawText(canvas, 'SCORE', 10, pad + 8, 9, Colors.white54, align: TextAlign.left);
+    _drawText(canvas, '${engine.score}', 10, pad + 20, 18, Colors.white, align: TextAlign.left);
 
     // Level
-    _drawText(canvas, 'LEVEL', size.width / 2, 8, 9, Colors.white54);
-    _drawText(canvas, '${engine.level}', size.width / 2, 20, 18, Colors.yellowAccent);
+    _drawText(canvas, 'LEVEL', size.width / 2, pad + 8, 9, Colors.white54);
+    _drawText(canvas, '${engine.level}', size.width / 2, pad + 20, 18, Colors.yellowAccent);
 
     // High score
-    _drawText(canvas, 'BEST', size.width - 10, 8, 9, Colors.white54, align: TextAlign.right);
-    _drawText(canvas, '${engine.highScore}', size.width - 10, 20, 15, Colors.white54, align: TextAlign.right);
+    _drawText(canvas, 'BEST', size.width - 10, pad + 8, 9, Colors.white54, align: TextAlign.right);
+    _drawText(canvas, '${engine.highScore}', size.width - 10, pad + 20, 15, Colors.white54, align: TextAlign.right);
 
     // Lives (hearts) — dim lost lives instead of shrinking them
     for (int i = 0; i < 3; i++) {
-      _drawEmoji(canvas, '❤️', 16 + i * 22.0, 44, 16,
+      _drawEmoji(canvas, '❤️', 16 + i * 22.0, pad + 44, 16,
           opacity: i < engine.lives ? 1.0 : 0.2);
     }
 
     // Combo
     if (engine.combo >= 2) {
       final comboColor = engine.combo >= 6 ? Colors.red : engine.combo >= 4 ? Colors.orange : Colors.yellowAccent;
-      _drawText(canvas, '🔥 COMBO ×${engine.combo}', size.width / 2, 44, 14, comboColor);
+      _drawText(canvas, '🔥 COMBO ×${engine.combo}', size.width / 2, pad + 44, 14, comboColor);
     }
 
     // Status badges (right side HUD)
     double badgeX = size.width - 8;
     if (engine.shielded) {
-      _drawEmoji(canvas, '🛡️', badgeX, 44, 16); badgeX -= 24;
+      _drawEmoji(canvas, '🛡️', badgeX, pad + 44, 16); badgeX -= 24;
     }
     if (engine.multiShot) {
-      _drawEmoji(canvas, '⚡', badgeX, 44, 16); badgeX -= 24;
+      _drawEmoji(canvas, '⚡', badgeX, pad + 44, 16); badgeX -= 24;
     }
     if (engine.slowMo) {
-      _drawEmoji(canvas, '⏱️', badgeX, 44, 16);
+      _drawEmoji(canvas, '⏱️', badgeX, pad + 44, 16);
     }
 
     // Viral charge bar
     const barH = 6.0;
     final barW = size.width * 0.5;
     final barX = (size.width - barW) / 2;
-    const barY = 57.0;
+    final barY = pad + 57.0;
 
     _pFill.color = Colors.white12;
     canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(barX, barY, barW, barH), const Radius.circular(3)), _pFill);
@@ -485,6 +501,18 @@ class GamePainter extends CustomPainter {
   }
 
   // ── Phase overlays ────────────────────────────────────────────────────────────
+
+  void _drawGetReady(Canvas canvas, Size size) {
+    final n = engine.readyT.ceil().clamp(1, 9);
+    final frac = engine.readyT - engine.readyT.floorToDouble(); // 1 → 0 each second
+    _drawText(canvas, engine.level % 3 == 1 && engine.level > 1 ? '👮 REINFORCEMENTS!' : 'WAVE ${engine.level}',
+        size.width / 2, size.height * 0.36, 22, Colors.yellowAccent);
+    // Round the animated size so the TextPainter cache doesn't fill with
+    // one entry per frame.
+    _drawText(canvas, '$n', size.width / 2, size.height * 0.46,
+        (30 + 14 * frac).roundToDouble(), Colors.white.withValues(alpha: 0.35 + 0.65 * frac));
+    _drawText(canvas, 'get ready…', size.width / 2, size.height * 0.55, 13, Colors.white54);
+  }
 
   void _drawBossWarning(Canvas canvas, Size size) {
     _pFill.color = Colors.black.withValues(alpha: 0.5);

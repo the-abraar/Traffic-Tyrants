@@ -2,12 +2,14 @@ import 'dart:math';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'audio.dart';
 import 'constants.dart';
 import 'entities.dart';
 
 class GameEngine extends ChangeNotifier {
   // ── Screen ───────────────────────────────────────────────────────────────────
   double sw = 0, sh = 0;
+  double topPad = 0; // display-cutout inset; HUD and formation shift down by it
 
   // ── Formation ────────────────────────────────────────────────────────────────
   double fmX = 0, fmY = 0, fmDir = 1, fmSpeed = kEnemyBaseSpeed;
@@ -42,9 +44,17 @@ class GameEngine extends ChangeNotifier {
 
   // ── Internal timing ──────────────────────────────────────────────────────────
   double _shootCD = 0, _enemyShootT = 1.2, _shakeT = 0, _bossWarnT = 0, _lvlDoneT = 0;
+  double _readyT = 0;
 
   // ── Phase ─────────────────────────────────────────────────────────────────────
-  GamePhase phase = GamePhase.playing;
+  GamePhase phase = GamePhase.getReady;
+  bool paused = false;
+
+  // Widgets only care about phase changes and viral readiness, so we notify on
+  // those transitions instead of every tick (painting is driven separately).
+  GamePhase _prevPhase = GamePhase.getReady;
+  bool _prevReady = false;
+  bool _disposed = false;
 
   // ── Ticker ───────────────────────────────────────────────────────────────────
   Ticker?  _ticker;
@@ -55,45 +65,80 @@ class GameEngine extends ChangeNotifier {
 
   // ── Public ───────────────────────────────────────────────────────────────────
 
-  void start(TickerProvider vsync, double w, double h) {
+  void start(TickerProvider vsync, double w, double h, {double topPad = 0}) {
+    this.topPad = topPad;
+    resize(w, h);
+    playerX = sw / 2;
+    _reset();
+    _ticker?.dispose();
+    _last = null;
+    _ticker = vsync.createTicker(_tick)..start();
+  }
+
+  /// Handles window resizes (desktop/web). Refits the formation layout and
+  /// keeps the player on screen.
+  void resize(double w, double h) {
+    if (w == sw && h == sh) return;
     sw = w; sh = h;
     // Fit the formation to the screen: cap its span at kFmMaxSpanFrac of the
     // width so it always has sway room before hitting the bounce margins.
     final maxSpan = sw * kFmMaxSpanFrac;
     spacingX = min(kEnemySpacingX, (maxSpan - kEnemyW) / (kCols - 1));
     enemyScale = (spacingX / kEnemySpacingX).clamp(0.65, 1.0);
-    playerX = sw / 2;
-    _reset();
-    _ticker?.dispose();
-    _ticker = vsync.createTicker(_tick)..start();
+    playerX = playerX.clamp(kPlayerW / 2, sw - kPlayerW / 2);
   }
 
   @override
-  void dispose() { _ticker?.dispose(); super.dispose(); }
+  void dispose() { _disposed = true; _ticker?.dispose(); super.dispose(); }
 
   void onLeft(bool v)  => movLeft  = v;
   void onRight(bool v) => movRight = v;
 
   void viralBlast() {
-    if (viralCharge < 1.0) return;
+    if (viralCharge < 1.0 || paused) return;
+    if (phase != GamePhase.playing && phase != GamePhase.bossFight) return;
+
+    // Against the boss: a charged blast is a big chunk of damage.
+    if (phase == GamePhase.bossFight) {
+      final b = boss;
+      if (b == null || !b.active) return;
+      viralCharge = 0;
+      b.hp -= kViralBossDamage;
+      score += 100 * kViralBossDamage;
+      if (score > highScore) highScore = score;
+      _shakeT = 0.8;
+      explosions.add(Explosion(ox: b.x, oy: b.y));
+      _addFloat(b.x, b.y - 34, '🔥 VIRAL HIT! −$kViralBossDamage HP', Colors.orange);
+      Sfx.bigBoom(); Sfx.tapHeavy();
+      if (b.hp <= 0) _killBoss(b);
+      return;
+    }
+
+    // Against the formation: wipe the two bottom-most rows that still have
+    // survivors, so a charged blast is never wasted on empty rows.
+    final aliveRows = enemies.where((e) => e.alive).map((e) => e.row).toSet().toList()..sort();
+    if (aliveRows.isEmpty) return;
+    final targets = aliveRows.length <= 2
+        ? aliveRows.toSet()
+        : {aliveRows[aliveRows.length - 2], aliveRows.last};
     viralCharge = 0;
     int cnt = 0;
     for (final e in enemies) {
-      if (e.alive && e.row >= kRows - 2) { _killEnemy(e, viral: true); cnt++; }
+      if (e.alive && targets.contains(e.row)) { _killEnemy(e, viral: true); cnt++; }
     }
     _shakeT = 0.7;
-    _addFloat(sw / 2, sh * .45, '🔥 VIRAL BLAST! ${cnt > 0 ? "×$cnt" : ""}', Colors.orange);
+    _addFloat(sw / 2, sh * .45, '🔥 VIRAL BLAST! ×$cnt', Colors.orange);
+    Sfx.bigBoom(); Sfx.tapHeavy();
   }
 
-  void restart() {
-    lives = 3; score = 0; level = 1; kills = 0;
-    combo = 0; comboT = 0; viralCharge = 0;
-    shielded = multiShot = slowMo = invincible = false;
-    _reset();
+  void togglePause() {
+    if (phase == GamePhase.gameOver) return;
+    paused = !paused;
     notifyListeners();
   }
 
   double get playerY       => sh - 82;
+  double get readyT        => _readyT;
   double get shake         => _shakeT.clamp(0, 1);
   int    get aliveCount    => enemies.where((e) => e.alive).length;
   // 0.0 = just fired, 1.0 = fully recharged
@@ -103,7 +148,7 @@ class GameEngine extends ChangeNotifier {
   (double, double) ePos(Enemy e) {
     final totalW = (kCols - 1) * spacingX;
     final sx = (sw - totalW) / 2;
-    return (sx + e.col * spacingX + fmX, kEnemyStartY + e.row * kEnemySpacingY + fmY);
+    return (sx + e.col * spacingX + fmX, kEnemyStartY + topPad + e.row * kEnemySpacingY + fmY);
   }
 
   // ── Init / Reset ──────────────────────────────────────────────────────────────
@@ -115,7 +160,8 @@ class GameEngine extends ChangeNotifier {
     explosions.clear(); floats.clear();
     fmX = 0; fmY = 0; fmDir = 1;
     _shootCD = 0; _enemyShootT = 1.2; _shakeT = 0;
-    phase = GamePhase.playing;
+    phase = GamePhase.getReady;
+    _readyT = kGetReadyDuration;
     fmSpeed = _calcFmSpeed();
   }
 
@@ -129,7 +175,8 @@ class GameEngine extends ChangeNotifier {
       _bossWarnT = 2.8;
     } else {
       enemies = _buildGrid();
-      phase = GamePhase.playing;
+      phase = GamePhase.getReady;
+      _readyT = kGetReadyDuration;
     }
     fmSpeed = _calcFmSpeed();
   }
@@ -153,12 +200,28 @@ class GameEngine extends ChangeNotifier {
     double dt = _last == null ? 0 : (now - _last!).inMicroseconds / 1e6;
     _last = now;
     if (dt <= 0 || dt > 0.1) return;
-    _update(dt);
-    notifyListeners();
+    if (!paused) _update(dt);
+
+    // Notify only on transitions widgets actually watch; the canvas repaints
+    // on its own AnimationController every frame regardless.
+    final ready = viralCharge >= 1.0;
+    if (phase != _prevPhase || ready != _prevReady) {
+      _prevPhase = phase;
+      _prevReady = ready;
+      notifyListeners();
+    }
   }
 
   void _update(double dt) {
     if (phase == GamePhase.gameOver) return;
+
+    if (phase == GamePhase.getReady) {
+      _readyT -= dt;
+      _movePlayer(dt, canShoot: false); // let players position themselves
+      _updateFx(dt);
+      if (_readyT <= 0) { phase = GamePhase.playing; _shootCD = 0.15; }
+      return;
+    }
 
     if (phase == GamePhase.bossWarning) {
       _bossWarnT -= dt;
@@ -189,15 +252,16 @@ class GameEngine extends ChangeNotifier {
 
   // ── Player & shooting ─────────────────────────────────────────────────────────
 
-  void _movePlayer(double dt) {
+  void _movePlayer(double dt, {bool canShoot = true}) {
     if (movLeft)  playerX -= kPlayerSpeed * dt;
     if (movRight) playerX += kPlayerSpeed * dt;
     playerX = playerX.clamp(kPlayerW / 2, sw - kPlayerW / 2);
 
+    if (!canShoot) return;
     _shootCD -= dt;
     if (_shootCD <= 0) {
       _fire();
-      _shootCD = kShootCooldown;
+      _shootCD += kShootCooldown; // += keeps the cadence steady across frames
     }
   }
 
@@ -210,6 +274,7 @@ class GameEngine extends ChangeNotifier {
     } else {
       bullets.add(Bullet(x: playerX, y: py));
     }
+    Sfx.shot();
   }
 
   // ── Bullets ───────────────────────────────────────────────────────────────────
@@ -228,7 +293,10 @@ class GameEngine extends ChangeNotifier {
 
   void _updateFormation(double dt) {
     if (enemies.every((e) => !e.alive)) return;
-    for (final e in enemies) e.animTimer += dt * 2.2;
+    for (final e in enemies) {
+      e.animTimer += dt * 2.2;
+      if (e.hitFlash > 0) e.hitFlash -= dt;
+    }
 
     fmX += fmDir * fmSpeed * dt;
 
@@ -261,7 +329,16 @@ class GameEngine extends ChangeNotifier {
     if (front.isNotEmpty) {
       final shooter = front.values.elementAt(_rng.nextInt(front.length));
       final (sx, sy) = ePos(shooter);
-      mamlas.add(Mamla(x: sx, y: sy + eH / 2, speed: kMamlaBaseSpeed + level * 12));
+      final spawnY = sy + eH / 2;
+      final speed = kMamlaBaseSpeed + level * 12;
+      // Sergeants lead their throw toward the player (capped so it's dodgeable);
+      // everyone else drops straight down.
+      double vx = 0;
+      if (shooter.type == EnemyType.sergeant) {
+        final tArrive = max(0.35, (playerY - spawnY) / speed);
+        vx = ((playerX - sx) / tArrive).clamp(-kMamlaMaxAimVx, kMamlaMaxAimVx);
+      }
+      mamlas.add(Mamla(x: sx, y: spawnY, speed: speed, vx: vx));
     }
 
     final alive = enemies.where((e) => e.alive).length;
@@ -274,9 +351,10 @@ class GameEngine extends ChangeNotifier {
   void _updateMamlas(double dt) {
     for (final m in mamlas) {
       if (!m.active) continue;
+      m.x += m.vx * dt;
       m.y += m.speed * dt;
       m.angle += m.spin * dt;
-      if (m.y > sh + 30) m.active = false;
+      if (m.y > sh + 30 || m.x < -30 || m.x > sw + 30) m.active = false;
     }
     mamlas.removeWhere((m) => !m.active);
   }
@@ -287,7 +365,7 @@ class GameEngine extends ChangeNotifier {
     final b = boss; if (b == null || !b.active) return;
     b.phase += dt;
     b.x += b.vx * dt;
-    b.y = 110 + sin(b.phase * 1.4) * 28;
+    b.y = 110 + topPad + sin(b.phase * 1.4) * 28;
     if (b.x < 55) { b.x = 55; b.vx = b.vx.abs() + 5; }
     if (b.x > sw - 55) { b.x = sw - 55; b.vx = -(b.vx.abs() + 5); }
 
@@ -354,7 +432,19 @@ class GameEngine extends ChangeNotifier {
         if (!e.alive) continue;
         final (ex, ey) = ePos(e);
         if (_hit(b.x, b.y, kBulletW, kBulletH, ex, ey, eW, eH)) {
-          b.active = false; _killEnemy(e); break;
+          b.active = false;
+          e.hp--;
+          if (e.hp <= 0) {
+            _killEnemy(e);
+          } else {
+            // Inspectors take two hits: flash white and give a chip-damage bonus.
+            e.hitFlash = 0.3;
+            score += 5;
+            if (score > highScore) highScore = score;
+            _addFloat(ex, ey - 18, '+5', Colors.white70);
+            Sfx.tapLight();
+          }
+          break;
         }
       }
       // Bullets → boss
@@ -364,6 +454,7 @@ class GameEngine extends ChangeNotifier {
           b.active = false;
           bss.hp--;
           score += 100;
+          if (score > highScore) highScore = score;
           _shakeT = 0.15;
           _addFloat(bss.x, bss.y - 20, '+100', Colors.yellow);
           if (bss.hp <= 0) _killBoss(bss);
@@ -432,6 +523,7 @@ class GameEngine extends ChangeNotifier {
 
     explosions.add(Explosion(ox: ex, oy: ey, label: mul > 1 ? 'x$mul!' : ''));
     _addFloat(ex, ey - 18, mul > 1 ? '+$pts ×$mul' : '+$pts', Colors.yellow);
+    if (!viral) { Sfx.explosion(); Sfx.tapLight(); } // viral plays one big boom
 
     if (!viral && _rng.nextDouble() < 0.20) {
       final t = PowerUpType.values[_rng.nextInt(PowerUpType.values.length)];
@@ -444,6 +536,7 @@ class GameEngine extends ChangeNotifier {
     kills++;
     score += 500; if (score > highScore) highScore = score;
     _shakeT = 1.0;
+    Sfx.bigBoom(); Sfx.tapHeavy();
     for (int i = 0; i < 9; i++) {
       explosions.add(Explosion(
         ox: b.x + (_rng.nextDouble() - 0.5) * 80,
@@ -464,11 +557,13 @@ class GameEngine extends ChangeNotifier {
     lives--;
     invincible = true; invincT = kInvincibleDuration;
     _shakeT = 0.55;
+    Sfx.explosion(); Sfx.tapMedium();
     _addFloat(playerX, playerY - 28, '📋 MAMLA HIT!', Colors.red);
     if (lives <= 0) { phase = GamePhase.gameOver; _saveHigh(); }
   }
 
   void _applyPow(PowerUp p) {
+    Sfx.tapLight();
     switch (p.type) {
       case PowerUpType.shield:
         shielded = true; shieldT = 4.5;
@@ -488,14 +583,18 @@ class GameEngine extends ChangeNotifier {
   // ── Speed calc ───────────────────────────────────────────────────────────────
 
   double _calcFmSpeed() {
+    // sqrt ramp + hard cap: the old linear (36/alive) ramp sent the last
+    // enemy across the screen at ~1800 px/s — visually teleporting.
     final alive = max(1, enemies.where((e) => e.alive).length);
-    return kEnemyBaseSpeed * (kTotalEnemies / alive) * (1 + (level - 1) * 0.10);
+    final raw = kEnemyBaseSpeed * sqrt(kTotalEnemies / alive) * (1 + (level - 1) * 0.10);
+    return min(raw, kFmMaxSpeed);
   }
 
   // ── High score ───────────────────────────────────────────────────────────────
 
   Future<void> _loadHigh() async {
     final p = await SharedPreferences.getInstance();
+    if (_disposed) return; // engine may be gone before the async load resolves
     highScore = p.getInt('mamla_high') ?? 0;
     notifyListeners();
   }

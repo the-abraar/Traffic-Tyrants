@@ -35,6 +35,11 @@ const double kPowerUpFallSpeed = 75.0;
 const double kShootCooldown       = 0.33;
 const double kInvincibleDuration  = 2.2;
 const double kFormationDrop       = 26.0;
+const double kGetReadyDuration    = 2.2;
+
+// ── Limits ────────────────────────────────────────────────────────────────────
+const double kFmMaxSpeed    = 340.0; // cap so the last enemy stays dodgeable
+const double kMamlaMaxAimVx = 110.0; // max horizontal speed of aimed mamlas
 
 // ── Formation layout ──────────────────────────────────────────────────────────
 const double kFmMargin       = 14.0; // side margin that triggers a bounce
@@ -42,3 +47,4 @@ const double kFmMaxSpanFrac  = 0.72; // max formation span as fraction of screen
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 const double kViralPerKill = 0.09; // ~11 kills to charge
+const int    kViralBossDamage = 4; // viral blast damage vs the boss
